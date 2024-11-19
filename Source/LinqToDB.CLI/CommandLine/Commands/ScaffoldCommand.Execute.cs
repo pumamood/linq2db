@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -12,6 +14,7 @@ using LinqToDB.Data;
 using LinqToDB.DataProvider.DB2;
 using LinqToDB.DataProvider.Oracle;
 using LinqToDB.DataProvider.PostgreSQL;
+using LinqToDB.Extensions;
 using LinqToDB.Metadata;
 using LinqToDB.Naming;
 using LinqToDB.Scaffold;
@@ -22,10 +25,10 @@ namespace LinqToDB.CommandLine
 	partial class ScaffoldCommand : CliCommand
 	{
 		public override int Execute(
-			CliController                  controller,
-			string[]                       rawArgs,
+			CliController controller,
+			string[] rawArgs,
 			Dictionary<CliOption, object?> options,
-			IReadOnlyCollection<string>    unknownArgs)
+			IReadOnlyCollection<string> unknownArgs)
 		{
 			// processed on controller level already
 			options.Remove(General.Import);
@@ -51,6 +54,7 @@ namespace LinqToDB.CommandLine
 
 			options.Remove(General.Provider, out value);
 			var providerName = Enum.Parse<DatabaseType>((string)value!);
+
 			var provider     = providerName switch
 			{
 				DatabaseType.Access          => ProviderName.Access,
@@ -68,20 +72,19 @@ namespace LinqToDB.CommandLine
 				DatabaseType.ClickHouseMySql => ProviderName.ClickHouseMySql,
 				DatabaseType.ClickHouseHttp  => ProviderName.ClickHouseClient,
 				DatabaseType.ClickHouseTcp   => ProviderName.ClickHouseOctonica,
+				DatabaseType.Custom          => settings.ProviderOptions.ProviderName ?? throw new InvalidOperationException($"Please specify 'provider-name' option to use custom provider"),
 				_                            => throw new InvalidOperationException($"Unsupported provider: {providerName}")
 			};
 
 			options.Remove(General.ConnectionString, out value);
 			var connectionString = (string)value!;
 
-			options.Remove(General.ProviderLocation, out value);
-			var providerLocation = (string?)value;
-
 			options.Remove(General.AdditionalConnectionString, out value);
 			var additionalConnectionString = (string?)value;
 
 			options.Remove(General.Interceptors, out value);
 			var interceptorsPath = (string?)value;
+
 
 			// assert that all provided options handled
 			if (options.Count > 0)
@@ -103,20 +106,18 @@ namespace LinqToDB.CommandLine
 			}
 
 			// perform scaffolding
-			return Scaffold(settings, interceptors, provider, providerLocation, connectionString, additionalConnectionString, output, overwrite);
+			return Scaffold(settings, interceptors, connectionString, additionalConnectionString, output, overwrite);
 		}
 
 		private int Scaffold(
-			ScaffoldOptions       settings,
+			ScaffoldOptions settings,
 			ScaffoldInterceptors? interceptors,
-			string                provider,
-			string?               providerLocation,
-			string          connectionString,
-			string?         additionalConnectionString,
-			string          output,
-			bool            overwrite)
+			string connectionString,
+			string? additionalConnectionString,
+			string output,
+			bool overwrite)
 		{
-			using var dc  = GetConnection(provider, providerLocation, connectionString, additionalConnectionString, out var secondaryConnection);
+			using var dc  = GetConnection(settings.ProviderOptions, connectionString, additionalConnectionString, out var secondaryConnection);
 			using var sdc = secondaryConnection;
 			if (dc == null)
 				return StatusCodes.EXPECTED_ERROR;
@@ -130,8 +131,8 @@ namespace LinqToDB.CommandLine
 			if (sdc != null)
 			{
 				var secondLegacyProvider = new LegacySchemaProvider(sdc, settings.Schema, language);
-				schemaProvider           = new MergedAccessSchemaProvider(legacyProvider, secondLegacyProvider);
-				typeMappingsProvider     = new AggregateTypeMappingsProvider(legacyProvider, secondLegacyProvider);
+				schemaProvider = new MergedAccessSchemaProvider(legacyProvider, secondLegacyProvider);
+				typeMappingsProvider = new AggregateTypeMappingsProvider(legacyProvider, secondLegacyProvider);
 			}
 
 			var generator  = new Scaffolder(LanguageProviders.CSharp, HumanizerNameConverter.Instance, settings, interceptors);
@@ -162,11 +163,12 @@ namespace LinqToDB.CommandLine
 			return StatusCodes.SUCCESS;
 		}
 
-		private DataConnection? GetConnection(string provider, string? providerLocation, string connectionString, string? additionalConnectionString, out DataConnection? secondaryConnection)
+		private DataConnection? GetConnection(ProviderOptions providerOptions, string connectionString, string? additionalConnectionString, out DataConnection? secondaryConnection)
 		{
 			secondaryConnection = null;
 			var returnSecondary = false;
-
+			var provider = providerOptions.ProviderName;
+			var providerLocation = providerOptions.ProviderLocation;
 			// general rules:
 			// - specify specific provider used by tool if linq2db supports multiple providers for database
 			// - if multiple dialects (versions) of db supported - make sure version detection enabled
@@ -175,12 +177,12 @@ namespace LinqToDB.CommandLine
 			// - allow user to specify provider discovery hints (e.g. provider path) for unmanaged providers
 			switch (provider)
 			{
-				case ProviderName.ClickHouseMySql   :
-				case ProviderName.ClickHouseClient  :
+				case ProviderName.ClickHouseMySql:
+				case ProviderName.ClickHouseClient:
 				case ProviderName.ClickHouseOctonica:
-				case ProviderName.SqlServer         :
+				case ProviderName.SqlServer:
 					break;
-				case ProviderName.SQLite            :
+				case ProviderName.SQLite:
 					provider = ProviderName.SQLiteClassic;
 					break;
 				case ProviderName.Firebird          :
@@ -192,10 +194,10 @@ namespace LinqToDB.CommandLine
 					OracleTools.AutoDetectProvider = true;
 					provider = ProviderName.OracleManaged;
 					break;
-				case ProviderName.PostgreSQL        :
+				case ProviderName.PostgreSQL:
 					PostgreSQLTools.AutoDetectProvider = true;
 					break;
-				case ProviderName.Sybase            :
+				case ProviderName.Sybase:
 					provider = ProviderName.SybaseManaged;
 					break;
 				case ProviderName.SqlCe             :
@@ -316,14 +318,57 @@ Provider could be downloaded from:
 						secondaryConnection = new DataConnection(secondaryDataProvider, additionalConnectionString);
 						// to simplify things for caller (no need to detect connection type)
 						// returned connection should be OLE DB and additional - ODBC
-						returnSecondary     = isSecondaryOleDb;
+						returnSecondary = isSecondaryOleDb;
 					}
 
 					break;
 				}
 				default:
-					Console.Error.WriteLine($"Unsupported database provider: {provider}");
-					return null;
+				{
+					//Console.Error.WriteLine($"Unsupported database provider: {provider}");
+					//return null;
+					if (providerLocation == null || !File.Exists(providerLocation))
+					{
+						Console.Error.WriteLine(@$"Cannot locate custom provider assembly.");
+						return null;
+					}
+					var dpIType = typeof(DataProvider.IDataProvider);
+					RedirectAllAssemblyVersion(dpIType.Assembly);
+					var assembly = Assembly.LoadFrom(providerLocation);
+					MethodInfo? detectorMethod = null;
+					object? detectorInstance = null;
+					if (!string.IsNullOrWhiteSpace(providerOptions.ProviderDetectorClass))
+					{
+						var detectorType = assembly.GetType(providerOptions.ProviderDetectorClass);
+						if (detectorType != null && detectorType.IsClass)
+						{
+							if (!string.IsNullOrWhiteSpace(providerOptions.ProviderDetectorMethod))
+								detectorMethod = FindMethod(bf=> detectorType.GetMethod(providerOptions.ProviderDetectorMethod, bf), out detectorInstance);
+							else
+								detectorMethod = FindMethod(bf => detectorType.GetMethods(bf)
+									.FirstOrDefault(y =>
+									{
+										var pp =y.GetParameters();
+										return pp.Length == 1 && pp[0].ParameterType == typeof(ConnectionOptions) && y.ReturnType.IsAssignableFrom(dpIType);
+									}), out detectorInstance);
+
+						}
+					}
+					else
+						detectorMethod = FindMethod(bf => assembly.GetTypes()
+						.SelectMany(x => x.GetMethods(bf)
+							.Where(y =>
+							{
+								var pp =y.GetParameters();
+								return pp.Length == 1 && pp[0].ParameterType == typeof(ConnectionOptions)
+								&& y.ReturnType.IsAssignableFrom(dpIType);
+							})).FirstOrDefault(), out detectorInstance);
+					if (detectorMethod == null)
+						throw new InvalidOperationException("Cannot find Detector method!");
+					DataConnection.InsertProviderDetector(x => detectorMethod.Invoke(detectorInstance, new object[] { x }) as DataProvider.IDataProvider);
+
+					break;
+				}
 			}
 
 			var dataProvider = DataConnection.GetDataProvider(provider, connectionString);
@@ -344,6 +389,30 @@ Provider could be downloaded from:
 			}
 
 			return dc;
+		}
+
+		private static MethodInfo? FindMethod(Func<BindingFlags, MethodInfo?> finder, out object? detectorInstance)
+		{
+			detectorInstance = null;
+			var detectorMethod = finder(BindingFlags.Static | BindingFlags.Public); 
+			//detectorType.GetMethod(providerOptions.ProviderDetectorMethod, BindingFlags.Static | BindingFlags.Public);
+			if (detectorMethod == null)
+			{
+				detectorMethod = finder(BindingFlags.Instance | BindingFlags.Public);
+				//detectorType.GetMethod(providerOptions.ProviderDetectorMethod, BindingFlags.Instance | BindingFlags.Public);
+				if (detectorMethod != null)
+				{
+					try
+					{
+						detectorInstance = Activator.CreateInstance(detectorMethod.DeclaringType!);
+					}
+					catch { }
+					if (detectorInstance == null)
+						detectorMethod = null;
+				}
+			}
+
+			return detectorMethod;
 		}
 
 		/// <summary>
@@ -385,30 +454,30 @@ Provider could be downloaded from:
 
 			using var childProcess = new Process();
 
-			childProcess.StartInfo.FileName               = exePath;
-			childProcess.StartInfo.UseShellExecute        = false;
+			childProcess.StartInfo.FileName = exePath;
+			childProcess.StartInfo.UseShellExecute = false;
 			childProcess.StartInfo.RedirectStandardOutput = true;
-			childProcess.StartInfo.RedirectStandardError  = true;
-			childProcess.StartInfo.CreateNoWindow         = true;
-			childProcess.StartInfo.WorkingDirectory       = Directory.GetCurrentDirectory();
+			childProcess.StartInfo.RedirectStandardError = true;
+			childProcess.StartInfo.CreateNoWindow = true;
+			childProcess.StartInfo.WorkingDirectory = Directory.GetCurrentDirectory();
 
 			// let .net handle arguments escaping
 			foreach (var arg in args)
 				childProcess.StartInfo.ArgumentList.Add(arg);
 
 			childProcess.OutputDataReceived += ChildProcess_OutputDataReceived;
-			childProcess.ErrorDataReceived  += ChildProcess_ErrorDataReceived;
+			childProcess.ErrorDataReceived += ChildProcess_ErrorDataReceived;
 
 			childProcess.Start();
 
 			childProcess.BeginOutputReadLine();
-			childProcess.BeginErrorReadLine ();
+			childProcess.BeginErrorReadLine();
 
 			// IMPORTANT: don't use WaitForExitAsync till net6+ migration due to buggy implementation in earlier versions
 			childProcess.WaitForExit();
 
 			childProcess.OutputDataReceived -= ChildProcess_OutputDataReceived;
-			childProcess.ErrorDataReceived  -= ChildProcess_ErrorDataReceived;
+			childProcess.ErrorDataReceived -= ChildProcess_ErrorDataReceived;
 
 			status = childProcess.ExitCode;
 
@@ -425,6 +494,46 @@ Provider could be downloaded from:
 		{
 			if (e.Data != null)
 				Console.Out.WriteLine(e.Data);
+		}
+
+		//private static void RedirectAssembly(string shortName, Version targetVersion, string publicKeyToken)
+		//{
+		//	Assembly? handler(object? sender, ResolveEventArgs args)
+		//	{
+		//		// Use latest strong name & version when trying to load SDK assemblies
+		//		var requestedAssembly = new AssemblyName(args.Name!);
+		//		if (requestedAssembly.Name != shortName)
+		//			return null;
+
+		//		Debug.WriteLine("Redirecting assembly load of " + args.Name + ",\tloaded by " + (args.RequestingAssembly == null ? "(unknown)" : args.RequestingAssembly.FullName));
+
+		//		requestedAssembly.Version = targetVersion;
+		//		requestedAssembly.SetPublicKeyToken(new AssemblyName("x, PublicKeyToken=" + publicKeyToken).GetPublicKeyToken());
+		//		requestedAssembly.CultureInfo = CultureInfo.InvariantCulture;
+
+		//		AppDomain.CurrentDomain.AssemblyResolve -= handler;
+
+		//		return Assembly.Load(requestedAssembly);
+		//	}
+
+		//	AppDomain.CurrentDomain.AssemblyResolve += handler;
+		//}
+
+		private static void RedirectAllAssemblyVersion(Assembly assembly)
+		{
+			Assembly? handler(object? sender, ResolveEventArgs args)
+			{
+				var newAssemblyName =  new AssemblyName(args.Name!);
+				if (newAssemblyName.Name == assembly.GetName().Name)
+				{
+					AppDomain.CurrentDomain.AssemblyResolve -= handler;
+
+					return assembly;
+				}
+				return Assembly.Load(newAssemblyName);
+			}
+
+			AppDomain.CurrentDomain.AssemblyResolve += handler;
 		}
 	}
 }
