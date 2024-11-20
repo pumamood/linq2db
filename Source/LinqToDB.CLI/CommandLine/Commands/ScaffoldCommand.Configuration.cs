@@ -29,8 +29,17 @@ namespace LinqToDB.CommandLine
 			ProcessSchemaOptions   (options, settings.Schema        );
 			ProcessDataModelOptions(options, settings.DataModel     );
 			ProcessCodeGenOptions  (options, settings.CodeGeneration);
+			ProcessProviderOptions  (options, settings.ProviderOptions);
 
 			return settings;
+		}
+
+		private static void ProcessProviderOptions(Dictionary<CliOption, object?> options, ProviderOptions settings)
+		{
+			if (options.Remove(General.ProviderName, out var value)) settings.ProviderName = (string)value!;
+			if (options.Remove(General.ProviderLocation, out value)) settings.ProviderLocation = value as string;
+			if (options.Remove(General.ProviderDetectorClass, out value)) settings.ProviderDetectorClass = value as string;
+			if (options.Remove(General.ProviderDetectorMethod, out value)) settings.ProviderDetectorMethod = value as string;
 		}
 
 		/// <summary>
@@ -197,7 +206,6 @@ namespace LinqToDB.CommandLine
 			if (options.Remove(DataModel.AsyncProcResultClassNaming          , out value)) settings.AsyncProcedureResultClassNameOptions           = ((NormalizationOptions)value!).MergeInto(settings.AsyncProcedureResultClassNameOptions);
 			if (options.Remove(DataModel.AsyncProcResultClassPropertyNaming  , out value)) settings.AsyncProcedureResultClassPropertiesNameOptions = ((NormalizationOptions)value!).MergeInto(settings.AsyncProcedureResultClassPropertiesNameOptions);
 			if (options.Remove(DataModel.ProcOrFuncResultColumnPropertyNaming, out value)) settings.ProcedureResultColumnPropertyNameOptions       = ((NormalizationOptions)value!).MergeInto(settings.ProcedureResultColumnPropertyNameOptions);
-			if (options.Remove(DataModel.TableFunctionMethodInfoNaming       , out value)) settings.TableFunctionMethodInfoFieldNameOptions        = ((NormalizationOptions)value!).MergeInto(settings.TableFunctionMethodInfoFieldNameOptions);
 			if (options.Remove(DataModel.FunctionTupleClassNaming            , out value)) settings.FunctionTupleResultClassNameOptions            = ((NormalizationOptions)value!).MergeInto(settings.FunctionTupleResultClassNameOptions);
 			if (options.Remove(DataModel.FunctionTupleFieldPropertyNaming    , out value)) settings.FunctionTupleResultPropertyNameOptions         = ((NormalizationOptions)value!).MergeInto(settings.FunctionTupleResultPropertyNameOptions);
 			if (options.Remove(DataModel.SchemaWrapperClassNaming            , out value)) settings.SchemaClassNameOptions                         = ((NormalizationOptions)value!).MergeInto(settings.SchemaClassNameOptions);

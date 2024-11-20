@@ -33,6 +33,9 @@ namespace LinqToDB.CommandLine
 			AddOption(_generalOptions, General.Overwrite);
 			AddOption(_generalOptions, General.Provider);
 			AddOption(_generalOptions, General.ProviderLocation);
+			AddOption(_generalOptions, General.ProviderName);
+			AddOption(_generalOptions, General.ProviderDetectorClass);
+			AddOption(_generalOptions, General.ProviderDetectorMethod);
 			AddOption(_generalOptions, General.ConnectionString);
 			AddOption(_generalOptions, General.AdditionalConnectionString);
 			AddOption(_generalOptions, General.Architecture);
@@ -100,7 +103,6 @@ namespace LinqToDB.CommandLine
 			AddOption(_dataModelOptions, DataModel.AsyncProcResultClassNaming);
 			AddOption(_dataModelOptions, DataModel.AsyncProcResultClassPropertyNaming);
 			AddOption(_dataModelOptions, DataModel.ProcOrFuncResultColumnPropertyNaming);
-			AddOption(_dataModelOptions, DataModel.TableFunctionMethodInfoNaming);
 			AddOption(_dataModelOptions, DataModel.FunctionTupleClassNaming);
 			AddOption(_dataModelOptions, DataModel.FunctionTupleFieldPropertyNaming);
 			AddOption(_dataModelOptions, DataModel.SchemaWrapperClassNaming);

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+
 using LinqToDB.DataModel;
 using LinqToDB.Metadata;
 using LinqToDB.Naming;
@@ -22,7 +24,7 @@ namespace LinqToDB.CommandLine
 		/// <summary>
 		/// Provides access to general scaffold options definitions.
 		/// </summary>
-		public static class General
+		internal static class General
 		{
 			/// <summary>
 			/// Import settings JSON option.
@@ -103,7 +105,8 @@ JSON file example:
 					new (false, false, DatabaseType.SapHana        .ToString(), "SAP HANA"                                                  ),
 					new (false, false, DatabaseType.ClickHouseMySql.ToString(), "ClickHouse (MySql interface)"                              ),
 					new (false, false, DatabaseType.ClickHouseHttp .ToString(), "ClickHouse (HTTP(S) interface)"                            ),
-					new (false, false, DatabaseType.ClickHouseTcp  .ToString(), "ClickHouse (TCP/binary interface)"                         ));
+					new (false, false, DatabaseType.ClickHouseTcp  .ToString(), "ClickHouse (TCP/binary interface)"                         ),
+					new (false, false, DatabaseType.Custom		   .ToString(), "Custom provider (requires provider-name and provider-location)"));
 
 			/// <summary>
 			/// Database provider location option.
@@ -119,6 +122,51 @@ Supported databases:
 - SQL Server Compact Edition : value is a full path to System.Data.SqlServerCe.dll assembly from Private folder of SQL CE installation
 - SAP HANA                   : value is a full path to Sap.Data.Hana.Core.v2.1.dll assembly from HDB client installation folder
 - IBM DB2 and Informix       : value is a full path to IBM.Data.DB2.Core.dll assembly in DB2 provider folder",
+					null,
+					null,
+					null,
+					null);
+
+			/// <summary>
+			/// Custom Provider name option.
+			/// </summary>
+			public static readonly CliOption ProviderName = new StringCliOption(
+					"provider-name",
+					null,
+					false,
+					false,
+					"custom database provider name",
+					@"Allows user to specify custom provider unique name.",
+					null,
+					null,
+					null,
+					null);
+
+			/// <summary>
+			/// ProviderDetector option.
+			/// </summary>
+			public static readonly CliOption ProviderDetectorClass = new StringCliOption(
+					"provider-detector-class",
+					null,
+					false,
+					false,
+					"provider detector class",
+					@"Allows user to specify class where to find implementation of provider detector.",
+					null,
+					null,
+					null,
+					null);
+
+			/// <summary>
+			/// ProviderDetector option.
+			/// </summary>
+			public static readonly CliOption ProviderDetectorMethod = new StringCliOption(
+					"provider-detector-method",
+					null,
+					false,
+					false,
+					"provider detector method",
+					@"Allows user to specify method name for provider detector.",
 					null,
 					null,
 					null,
@@ -213,7 +261,7 @@ Example of platform-specific providers:
 
 If you choose T4, you can create initial empty template using 'dotnet linq2db template' command. It will generate initial template file with pre-generated extension points which you can modify to implement required customizations.
 Customization using compiled assembly has several requirements:
-- it should be compatible with current runtime, used by 'dotnet linq2db' tool (netcoreapp3.1 by default);
+- it should be compatible with current runtime, used by 'dotnet linq2db' tool;
 - assembly should contain exactly one interceptor class with customization logic. It should be inherited from {nameof(ScaffoldInterceptors)} and has default public constructor;
 - linq2db.Tools version should match tool's version to avoid possible compatibility issues/errors.",
 					null,
@@ -225,7 +273,7 @@ Customization using compiled assembly has several requirements:
 		/// <summary>
 		/// Provides access to code-generation scaffold options definitions.
 		/// </summary>
-		public static class CodeGen
+		internal static class CodeGen
 		{
 			/// <summary>
 			/// Nullable annotations generation option.
@@ -378,7 +426,7 @@ Customization using compiled assembly has several requirements:
 		/// <summary>
 		/// Provides access to data model scaffold options definitions.
 		/// </summary>
-		public static class DataModel
+		internal static class DataModel
 		{
 			/// <summary>
 			/// Naming option help text.
@@ -413,8 +461,23 @@ If you don't specify some property, CLI will use default value for current optio
 			/// <summary>
 			/// Naming option example template.
 			/// </summary>
-			private const string NAMING_EXAMPLE_TEMPLATE =
 #pragma warning disable JSON001 // Invalid JSON pattern
+#if SUPPORTS_COMPOSITE_FORMAT
+			private static readonly CompositeFormat NAMING_EXAMPLE_TEMPLATE = CompositeFormat.Parse(
+ @"
+{{
+  ""dataModel"":
+  {{
+    ""{0}"":
+    {{
+      ""case""         : ""pascal_case"",
+      ""pluralization"": ""singular"",
+      ""suffix""       : ""Record""
+    }}
+  }}
+}}");
+#else
+			private const string NAMING_EXAMPLE_TEMPLATE =
  @"
 {{
   ""dataModel"":
@@ -427,6 +490,7 @@ If you don't specify some property, CLI will use default value for current optio
     }}
   }}
 }}";
+#endif
 #pragma warning restore JSON001 // Invalid JSON pattern
 
 			/// <summary>
@@ -1061,15 +1125,6 @@ If you don't specify some property, CLI will use default value for current optio
 				_t4ModeOptions.DataModel.ProcedureResultColumnPropertyNameOptions);
 
 			/// <summary>
-			/// Table function <see cref="MethodInfo"/> field naming option.
-			/// </summary>
-			public static readonly CliOption TableFunctionMethodInfoNaming = DefineNamingOption(
-				"table-function-methodinfo-field-name",
-				"table function FieldInfo field naming options",
-				_defaultOptions.DataModel.TableFunctionMethodInfoFieldNameOptions,
-				_t4ModeOptions.DataModel.TableFunctionMethodInfoFieldNameOptions);
-
-			/// <summary>
 			/// Scalar function with tuple return type tuple mapping class naming option.
 			/// </summary>
 			public static readonly CliOption FunctionTupleClassNaming = DefineNamingOption(
@@ -1116,7 +1171,6 @@ If you don't specify some property, CLI will use default value for current optio
 
 			private static NamingCliOption DefineNamingOption(string option, string help, NormalizationOptions? defaults, NormalizationOptions? t4defaults)
 			{
-#pragma warning disable CA1863 // Use 'CompositeFormat'
 				return new NamingCliOption(
 					option,
 					help,
@@ -1124,14 +1178,13 @@ If you don't specify some property, CLI will use default value for current optio
 					new[] { string.Format(CultureInfo.InvariantCulture, NAMING_EXAMPLE_TEMPLATE, option) },
 					defaults,
 					t4defaults);
-#pragma warning restore CA1863 // Use 'CompositeFormat'
 			}
 		}
 
 		/// <summary>
 		/// Provides access to database schema scaffold options definitions.
 		/// </summary>
-		public static class SchemaOptions
+		internal static class SchemaOptions
 		{
 			/// <summary>
 			/// Schema objects to load option.
@@ -1869,6 +1922,8 @@ string // also you can put aggregate function name as string directly to list
 			ClickHouseMySql,
 			ClickHouseHttp,
 			ClickHouseTcp,
+			//Added for External Provider
+			Custom
 		}
 
 		public static CliCommand Instance { get; } = new ScaffoldCommand();
